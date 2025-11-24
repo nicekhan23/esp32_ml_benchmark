@@ -21,7 +21,7 @@ This thesis project measures and compares:
 ## 🚀 Quick Start
 ```bash
 # Clone and build
-git clone <repo>
+git clone https://github.com/nicekhan23/esp32_ml_benchmark
 cd esp32-ml-benchmark
 idf.py build flash monitor
 ```
@@ -66,7 +66,7 @@ Latest benchmark results: [docs/RESULTS.md](docs/RESULTS.md)
 
 ## 🤝 Contributing
 
-This is a thesis project. For questions: [your.email@university.edu]
+This is a thesis project. For questions: [w7stvz@pte.hu]
 
 ## 📝 License
 

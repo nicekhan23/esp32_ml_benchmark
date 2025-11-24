@@ -1,2 +1,17 @@
-idf_component_register(SRCS "main.cpp" "main_functions.cpp" "model.cpp"
-                       INCLUDE_DIRS ".")
+idf_component_register(
+    SRCS 
+        "main.cpp" 
+        "main_functions.cpp" 
+        "models/sine/model.cpp"
+        "models/cnn/cnn_model_float32.cpp"
+        "models/cnn/cnn_model_int8.cpp"
+        "models/rnn/rnn_model_float32.cpp"
+        "models/rnn/rnn_model_int8.cpp"
+    INCLUDE_DIRS 
+        "."
+        "models"
+        "models/sine"
+        "models/cnn"
+        "models/rnn"
+        "utils"
+)

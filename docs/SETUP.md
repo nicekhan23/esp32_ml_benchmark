@@ -26,7 +26,7 @@ idf.py --version
 
 ### 2. Clone Project
 ```bash
-git clone <your-repo>
+git clone https://github.com/nicekhan23/esp32_ml_benchmark
 cd esp32-ml-benchmark
 ```
 

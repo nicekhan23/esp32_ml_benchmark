@@ -1,18 +1,6 @@
 /**
  * @file main_functions.cpp
- * @brief Core benchmarking logic for ESP32 ML inference
- * 
- * This file implements the main setup() and loop() functions that:
- * - Initialize TensorFlow Lite Micro interpreter
- * - Load and run ML models
- * - Measure inference latency and memory usage
- * - Log results in CSV format for analysis
- * 
- * @see docs/ARCHITECTURE.md for system design
- * @see docs/BENCHMARKING.md for usage instructions
- * 
- * @author Darkhan Zhanibekuly
- * @date 2025-11-18
+ * @brief Core benchmarking logic with multi-model support
  */
 
 #include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
@@ -40,9 +28,9 @@ size_t heap_before_init = 0;
 size_t heap_after_init = 0;
 size_t min_free_heap = 0;
 
-// Enhanced statistics
-constexpr int kWarmupInferences = 10;
-int64_t latencies[100];  // Store last 100 latencies for stddev calculation
+// Statistics
+constexpr int kMaxLatencyHistory = 100;
+int64_t latencies[kMaxLatencyHistory];
 int latency_index = 0;
 bool warmup_done = false;
 
@@ -58,8 +46,14 @@ tflite::MicroInterpreter* interpreter = nullptr;
 TfLiteTensor* input = nullptr;
 TfLiteTensor* output = nullptr;
 
-// For hello_world sine model
-float x_val = 0.0f;
+// Model-specific variables
+const char* current_model_name = "";
+const char* current_quantization = "";
+float x_val = 0.0f;  // For sine model
+
+// Model configuration
+const unsigned char* model_data = nullptr;
+int model_data_len = 0;
 }
 
 // Calculate standard deviation
@@ -75,54 +69,77 @@ float calculate_stddev(int64_t* values, int count, int64_t mean) {
   return sqrt((float)sum_squared_diff / (count - 1));
 }
 
-/**
- * @brief Initialize benchmarking framework and load ML model
- * 
- * Steps performed:
- * 1. Measure baseline memory usage
- * 2. Load TFLite model from g_model array
- * 3. Set up operation resolver with required ops
- * 4. Allocate tensor arena
- * 5. Prepare input/output tensor pointers
- * 6. Print initialization summary
- * 
- * @note Called once at startup by app_main()
- * @see loop() for inference execution
- */
+// Get model info based on CURRENT_MODEL
+void select_model() {
+  #if CURRENT_MODEL == MODEL_SINE_FLOAT32
+    model_data = g_sine_model_float32;
+    model_data_len = g_sine_model_float32_len;
+    current_model_name = "sine";
+    current_quantization = "float32";
+  #elif CURRENT_MODEL == MODEL_CNN_FLOAT32
+    model_data = g_cnn_model_float32;
+    model_data_len = g_cnn_model_float32_len;
+    current_model_name = "cnn";
+    current_quantization = "float32";
+  #elif CURRENT_MODEL == MODEL_CNN_INT8
+    model_data = g_cnn_model_int8;
+    model_data_len = g_cnn_model_int8_len;
+    current_model_name = "cnn";
+    current_quantization = "int8";
+  #elif CURRENT_MODEL == MODEL_RNN_FLOAT32
+    model_data = g_rnn_model_float32;
+    model_data_len = g_rnn_model_float32_len;
+    current_model_name = "rnn";
+    current_quantization = "float32";
+  #elif CURRENT_MODEL == MODEL_RNN_INT8
+    model_data = g_rnn_model_int8;
+    model_data_len = g_rnn_model_int8_len;
+    current_model_name = "rnn";
+    current_quantization = "int8";
+  #else
+    #error "Invalid CURRENT_MODEL selection"
+  #endif
+}
+
 void setup() {
   heap_before_init = esp_get_free_heap_size();
-  
   tflite::InitializeTarget();
 
-  
   MicroPrintf("=== ESP32 ML Benchmark Framework ===");
+  
+  // Select model based on configuration
+  select_model();
+  MicroPrintf("Selected Model: %s (%s)", current_model_name, current_quantization);
+  MicroPrintf("Model size: %d bytes", model_data_len);
+  
   OutputHandler::PrintSystemInfo();
   
   // Load model
-  model = tflite::GetModel(g_model);
+  model = tflite::GetModel(model_data);
   if (model->version() != TFLITE_SCHEMA_VERSION) {
-    MicroPrintf("Model schema version %d doesn't match supported version %d",
-                model->version(), TFLITE_SCHEMA_VERSION);
+    MicroPrintf("Model schema mismatch! Expected %d, got %d",
+                TFLITE_SCHEMA_VERSION, model->version());
     return;
   }
   MicroPrintf("Model loaded successfully");
   
   // Set up operations resolver
-  static tflite::MicroMutableOpResolver<10> resolver;
+  // Increase size to accommodate all operations
+  static tflite::MicroMutableOpResolver<20> resolver;
   
-  // Add operations used by hello_world model
-  if (resolver.AddFullyConnected() != kTfLiteOk) {
-    MicroPrintf("Failed to add FullyConnected op");
-    return;
-  }
-  if (resolver.AddQuantize() != kTfLiteOk) {
-    MicroPrintf("Failed to add Quantize op");
-    return;
-  }
-  if (resolver.AddDequantize() != kTfLiteOk) {
-    MicroPrintf("Failed to add Dequantize op");
-    return;
-  }
+  // Add operations (add more as needed for your models)
+  resolver.AddFullyConnected();
+  resolver.AddQuantize();
+  resolver.AddDequantize();
+  resolver.AddConv2D();
+  resolver.AddMaxPool2D();
+  resolver.AddReshape();
+  resolver.AddSoftmax();
+  resolver.AddUnidirectionalSequenceLSTM();
+  resolver.AddTanh();
+  resolver.AddLogistic();
+  resolver.AddMul();
+  resolver.AddAdd();
   
   // Build interpreter
   static tflite::MicroInterpreter static_interpreter(
@@ -132,13 +149,19 @@ void setup() {
   // Allocate tensors
   TfLiteStatus allocate_status = interpreter->AllocateTensors();
   if (allocate_status != kTfLiteOk) {
-    MicroPrintf("AllocateTensors() failed");
+    MicroPrintf("AllocateTensors() failed!");
     return;
   }
   
   // Get input/output tensors
   input = interpreter->input(0);
   output = interpreter->output(0);
+  
+  // Print tensor info
+  MicroPrintf("Input tensor: %d bytes, type=%d", 
+              input->bytes, input->type);
+  MicroPrintf("Output tensor: %d bytes, type=%d", 
+              output->bytes, output->type);
   
   heap_after_init = esp_get_free_heap_size();
   min_free_heap = esp_get_minimum_free_heap_size();
@@ -155,40 +178,57 @@ void setup() {
   CSVLogger::PrintHeader();
 }
 
-/**
- * @brief Execute one model inference and collect metrics
- * 
- * Measurements collected:
- * - Inference latency (microseconds)
- * - Min/max/average latency
- * - Standard deviation
- * - Memory usage
- * 
- * @note Called repeatedly in infinite loop
- * @see CSVLogger for data format
- */
+// Prepare input based on model type
+void prepare_input() {
+  #if CURRENT_MODEL == MODEL_SINE_FLOAT32
+    // Sine model: single float input
+    x_val += 0.1f;
+    if (x_val > 2.0f * 3.14159f) x_val = 0.0f;
+    input->data.f[0] = x_val;
+    
+  #elif CURRENT_MODEL == MODEL_CNN_FLOAT32
+    // CNN model: 8x8 image, generate random pattern
+    for (int i = 0; i < 64; i++) {
+      input->data.f[i] = (float)(rand() % 100) / 100.0f;
+    }
+    
+  #elif CURRENT_MODEL == MODEL_CNN_INT8
+    // CNN model int8: 8x8 image
+    for (int i = 0; i < 64; i++) {
+      input->data.int8[i] = (int8_t)(rand() % 256 - 128);
+    }
+    
+  #elif CURRENT_MODEL == MODEL_RNN_FLOAT32
+    // RNN model: sequence of 10 floats
+    for (int i = 0; i < 10; i++) {
+      input->data.f[i] = (float)(rand() % 100) / 10.0f;
+    }
+    
+  #elif CURRENT_MODEL == MODEL_RNN_INT8
+    // RNN model int8: sequence of 10 int8
+    for (int i = 0; i < 10; i++) {
+      input->data.int8[i] = (int8_t)(rand() % 256 - 128);
+    }
+  #endif
+}
+
 void loop() {
   if (interpreter == nullptr) {
     vTaskDelay(pdMS_TO_TICKS(1000));
     return;
   }
   
-  // Prepare input (increment x for sine wave)
-  x_val += 0.1f;
-  if (x_val > 2.0f * 3.14159f) x_val = 0.0f;
-  
-  input->data.f[0] = x_val;
+  // Prepare input
+  prepare_input();
   
   // Measure inference time
   int64_t start_time = esp_timer_get_time();
-  
   TfLiteStatus invoke_status = interpreter->Invoke();
-  
   int64_t end_time = esp_timer_get_time();
   int64_t latency_us = end_time - start_time;
   
   if (invoke_status != kTfLiteOk) {
-    MicroPrintf("Invoke failed");
+    MicroPrintf("Invoke failed!");
     return;
   }
   
@@ -198,11 +238,11 @@ void loop() {
   if (latency_us < min_latency_us) min_latency_us = latency_us;
   if (latency_us > max_latency_us) max_latency_us = latency_us;
   
-  // Store latency for stddev calculation
+  // Store latency for stddev
   latencies[latency_index] = latency_us;
-  latency_index = (latency_index + 1) % 100;
+  latency_index = (latency_index + 1) % kMaxLatencyHistory;
   
-  // Skip warmup inferences
+  // Warmup phase
   if (total_inferences == kWarmupInferences) {
     MicroPrintf("Warmup complete, starting measurements...");
     warmup_done = true;
@@ -212,37 +252,32 @@ void loop() {
     max_latency_us = 0;
   }
   
-  // Print results every 10 inferences (after warmup)
+  // Print results every 10 inferences
   if (warmup_done && total_inferences > 0 && total_inferences % 10 == 0) {
     int64_t average_latency = total_latency_us / total_inferences;
-    float y_val = output->data.f[0];
-    
-    // Calculate standard deviation
-    int sample_count = (total_inferences < 100) ? total_inferences : 100;
+    int sample_count = (total_inferences < kMaxLatencyHistory) ? total_inferences : kMaxLatencyHistory;
     float stddev = calculate_stddev(latencies, sample_count, average_latency);
     
     MicroPrintf("=== Iteration %lld ===", total_inferences);
-    MicroPrintf("Inference: x=%.2f -> y=%.4f", x_val, y_val);
     MicroPrintf("Latency: cur=%lld us, avg=%lld us, min=%lld us, max=%lld us, stddev=%.2f us",
                 latency_us, average_latency, min_latency_us, max_latency_us, stddev);
 
     CSVLogger::LogInference(
-        total_inferences, "sine_model", "float32",
+        total_inferences, current_model_name, current_quantization,
         latency_us, min_latency_us, max_latency_us, average_latency,
         stddev, interpreter->arena_used_bytes(), esp_get_free_heap_size()
     );
     
-    OutputHandler::PrintSystemInfo();
-    MicroPrintf("");  // Blank line for readability
+    MicroPrintf("");
   }
   
-  // Print final summary every 100 inferences
+  // Print summary every 100 inferences
   if (warmup_done && total_inferences % 100 == 0) {
     int64_t avg_latency = total_latency_us / total_inferences;
-    float stddev = calculate_stddev(latencies, 100, avg_latency);
+    float stddev = calculate_stddev(latencies, kMaxLatencyHistory, avg_latency);
     
     OutputHandler::PrintBenchmarkResult(
-        "sine_model_float32",
+        current_model_name,
         avg_latency,
         interpreter->arena_used_bytes()
     );
