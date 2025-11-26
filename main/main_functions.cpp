@@ -18,6 +18,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "models/sine/model8.h"
+#include "models/sine/model32.h"
+#include "models/cnn/model8.h"
+#include "models/cnn/model32.h"
+#include "models/rnn/model8.h"
+#include "models/rnn/model32.h"
+
 namespace {
 // Tensor arena for model inference
 uint8_t tensor_arena[kTensorArenaSize];

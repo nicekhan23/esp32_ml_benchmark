@@ -2,7 +2,7 @@
 #define OUTPUT_HANDLER_H_
 
 #include "tensorflow/lite/micro/micro_log.h"
-#include "esp_system.h"  // Add this for heap functions
+#include "esp_system.h"
 
 // Simple output handler for benchmarking results
 class OutputHandler {
