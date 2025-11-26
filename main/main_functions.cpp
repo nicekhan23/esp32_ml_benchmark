@@ -9,7 +9,6 @@
 #include "tensorflow/lite/schema/schema_generated.h"
 
 #include "main_functions.h"
-#include "model.h"
 #include "constants.h"
 #include "output_handler.h"
 #include "csv_logger.h"

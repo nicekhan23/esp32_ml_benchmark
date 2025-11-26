@@ -2,7 +2,8 @@ idf_component_register(
     SRCS 
         "main.cpp" 
         "main_functions.cpp" 
-        "models/sine/model.cpp"
+        "models/sine/sine_model_float32.cpp"
+        "models/sine/sine_model_int8.cpp"
         "models/cnn/cnn_model_float32.cpp"
         "models/cnn/cnn_model_int8.cpp"
         "models/rnn/rnn_model_float32.cpp"
