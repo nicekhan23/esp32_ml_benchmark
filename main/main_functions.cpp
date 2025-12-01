@@ -224,6 +224,57 @@ void loop() {
     return;
   }
   
+  #if CURRENT_MODE == DEMO_MODE_WAVEFORM_CLASSIFICATION
+    static int demo_iteration = 0;
+    
+    // Sample from ADC (external signal from ESP32 #1)
+    float samples[kWaveformSamples];
+    ADCSampler::Sample(samples, kWaveformSamples);
+    
+    // Copy to model input
+    for(int i = 0; i < kWaveformSamples; i++) {
+      input->data.f[i] = samples[i];
+    }
+    
+    // Measure inference latency
+    int64_t start_time = esp_timer_get_time();
+    TfLiteStatus invoke_status = interpreter->Invoke();
+    int64_t latency_us = esp_timer_get_time() - start_time;
+    
+    if (invoke_status != kTfLiteOk) {
+      MicroPrintf("Invoke failed!");
+      return;
+    }
+    
+    // Get prediction
+    int predicted_class = 0;
+    float max_score = output->data.f[0];
+    for(int i = 1; i < kNumWaveformClasses; i++) {
+      if(output->data.f[i] > max_score) {
+        max_score = output->data.f[i];
+        predicted_class = i;
+      }
+    }
+    
+    const char* class_names[] = {"SINE", "SQUARE", "TRIANGLE"};
+    
+    MicroPrintf("=== Inference %d ===", demo_iteration);
+    MicroPrintf("Predicted: %s | Confidence: %.2f%% | Latency: %lld us",
+                class_names[predicted_class],
+                max_score * 100.0f,
+                latency_us);
+    
+    // Log for benchmarking
+    CSVLogger::LogInference(
+        demo_iteration, current_model_name, current_quantization,
+        latency_us, min_latency_us, max_latency_us, latency_us,
+        0.0f, interpreter->arena_used_bytes(), esp_get_free_heap_size()
+    );
+    
+    demo_iteration++;
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+  #else
   // Prepare input
   prepare_input();
   
@@ -275,6 +326,7 @@ void loop() {
     );
     
     MicroPrintf("");
+    #endif
   }
   
   // Print summary every 100 inferences
